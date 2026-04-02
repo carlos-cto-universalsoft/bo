@@ -10,7 +10,6 @@ export const RoleSkinManageView = ({
   currentSkin,
   targetRole,
 }) => {
-  // 👇 CORRECCIÓN: Extraemos hasGlobalPermission
   const { editRole, currentUser, hasGlobalPermission, roles, skins, sites } =
     useData();
   const [selectedSkins, setSelectedSkins] = useState(targetRole?.skins || []);
@@ -20,18 +19,44 @@ export const RoleSkinManageView = ({
     ...new Set([...currentUser.allowedSkins, ...(userRoleData?.skins || [])]),
   ];
 
-  // 👇 INYECCIÓN APLICADA: Validación de SuperAdmin unificada por Empresa (Nivel 1)
   const isSuperAdmin = currentUser?.contractId === 'c-001';
 
-  const assignableSkins = skins.filter((s) =>
-    combinedAllowedSkins.includes(s.id)
-  );
+  // 👇 INYECCIÓN 1: Deducción Arquitectónica del Contrato (Traduciendo Skin -> Site -> Contract)
+  let exactTargetRoleContractId = targetRole?.contractId;
+  
+  if (!exactTargetRoleContractId) {
+    if (targetRole?.id === '00001') {
+      exactTargetRoleContractId = 'c-001';
+    } else if (targetRole?.baseSkin) {
+      const baseSkinObj = skins.find((s) => s.id === targetRole.baseSkin);
+      if (baseSkinObj) {
+        const parentSite = sites.find((site) => site.id === baseSkinObj.siteId);
+        exactTargetRoleContractId = parentSite?.contractId;
+      }
+    }
+  }
+
+  // 👇 INYECCIÓN 2: Filtro B2B Estricto
+  const assignableSkins = skins.filter((skin) => {
+    const isAllowedByUser = combinedAllowedSkins.includes(skin.id);
+    
+    // Si el cargo es de Universal Soft (c-001), mostramos todo lo permitido para dar soporte global
+    if (exactTargetRoleContractId === 'c-001') return isAllowedByUser;
+
+    // Si el cargo es de un Cliente B2B (Ej. GoldenBet), buscamos el dueño de cada skin y filtramos
+    if (exactTargetRoleContractId) {
+      const parentSite = sites.find((s) => s.id === skin.siteId);
+      const isSkinFromThisContract = parentSite && parentSite.contractId === exactTargetRoleContractId;
+      return isAllowedByUser && isSkinFromThisContract;
+    }
+
+    return isAllowedByUser; // Fallback de seguridad
+  });
 
   const hiddenSkinsCount = (targetRole?.skins || []).filter(
     (s) => !combinedAllowedSkins.includes(s)
   ).length;
 
-  // 👈 LÓGICA NUEVA: Agrupamos las skins por Site (Igual que en Create y Edit)
   const skinsBySite = assignableSkins.reduce((acc, skin) => {
     const parentSite = sites.find((s) => s.id === skin.siteId);
     const siteName = parentSite ? parentSite.name : 'Otras Plataformas';
@@ -43,7 +68,6 @@ export const RoleSkinManageView = ({
     return acc;
   }, {});
 
-  // 👇 MODIFICACIÓN APROBADA: Estandarización de Logo dinámico
   const getSkinLogo = (skinId) => {
     const skinObj = skins.find((s) => s.id === skinId);
     if (skinObj && skinObj.siteId && sites) {
@@ -62,7 +86,6 @@ export const RoleSkinManageView = ({
   };
 
   const handleSave = () => {
-    // 👇 CORRECCIÓN: Ahora evalúa el poder Global para modificar las skins del cargo
     if (!hasGlobalPermission('rol_skin_act'))
       return alert(
         'Acceso Denegado: No tienes permiso de ACCIÓN para asignar o retirar países a un cargo.'
@@ -86,6 +109,7 @@ export const RoleSkinManageView = ({
       ...targetRole,
       skins: selectedSkins,
       permissions: updatedPermissions,
+      contractId: exactTargetRoleContractId, // 👇 INYECCIÓN 3: Persistencia del dueño del cargo
     });
     onNavigate('role_list', 'Listar Cargos', Globe);
     if (onCloseTab) onCloseTab();
@@ -93,7 +117,6 @@ export const RoleSkinManageView = ({
 
   if (!targetRole) return <div className="p-8 text-white">Cargando...</div>;
 
-  // 👇 INYECCIÓN NUEVA: Bloqueo de Inmutabilidad de Sesión (Anti-Self-Lockout AWS/B2B2C Standard)
   if (targetRole.id === currentUser.roleId) {
     return (
       <div className="p-8 h-full flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95">
@@ -122,7 +145,6 @@ export const RoleSkinManageView = ({
     );
   }
 
-  // 👇 INYECCIÓN: Bloqueo Total Jerárquico (Hard Stop Nivel 1)
   if (targetRole.id === '00001' && !isSuperAdmin) {
     return (
       <div className="p-8 h-full flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95">
@@ -150,13 +172,8 @@ export const RoleSkinManageView = ({
     );
   }
 
-  // 👇 INYECCIÓN ZERO TRUST: Bloqueo Horizontal B2B (Hard Stop Nivel 2)
-  const targetRoleSkinObj = skins.find((s) => s.id === targetRole.baseSkin);
-  const targetRoleContractId =
-    targetRole.contractId ||
-    (targetRole.id === '00001' ? 'c-001' : targetRoleSkinObj?.contractId);
-
-  if (!isSuperAdmin && targetRoleContractId !== currentUser.contractId) {
+  // 👇 INYECCIÓN 4: Actualización del control Zero Trust con la nueva variable
+  if (!isSuperAdmin && exactTargetRoleContractId !== currentUser.contractId) {
     return (
       <div className="p-8 h-full flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95">
         <div className="w-24 h-24 bg-red-500/10 rounded-full flex items-center justify-center border-2 border-red-500/50 mb-6 shadow-[0_0_50px_rgba(239,68,68,0.2)]">
@@ -183,7 +200,6 @@ export const RoleSkinManageView = ({
   }
 
   return (
-    // 👇 CAMBIO APLICADO: Eliminado max-w-[1600px] y añadido flex flex-col
     <div className="p-8 pb-24 w-full h-full mx-auto overflow-y-auto text-slate-200 custom-scrollbar flex flex-col">
       <ViewHeader
         title={`Cobertura Geográfica: ${targetRole.name}`}
@@ -212,7 +228,6 @@ export const RoleSkinManageView = ({
           </div>
         )}
 
-        {/* 👇 MODIFICACIÓN APROBADA: Grupos de Skins por Site con textos limpios */}
         <div className="space-y-6">
           {Object.entries(skinsBySite).map(([siteName, siteData]) => (
             <div
@@ -256,7 +271,6 @@ export const RoleSkinManageView = ({
                         </span>
                       </div>
                       <div className="text-left overflow-hidden ml-2 flex-1">
-                        {/* 👇 Mostrar SiteName y Divisa limpiamente */}
                         <div
                           className={`font-bold text-[11px] truncate uppercase leading-tight ${
                             isSelected ? 'text-[#D10057]' : 'text-slate-300'
@@ -284,6 +298,13 @@ export const RoleSkinManageView = ({
               </div>
             </div>
           ))}
+
+          {Object.keys(skinsBySite).length === 0 && (
+             <div className="p-4 text-center text-slate-500 text-xs italic border border-dashed border-slate-800 rounded-xl">
+               No hay skins (entornos operativos) disponibles para esta empresa.
+             </div>
+          )}
+
         </div>
       </div>
       <div className="fixed bottom-0 left-0 w-full bg-[#111827] border-t border-slate-800 p-4 flex justify-end gap-3 z-50 shadow-2xl">

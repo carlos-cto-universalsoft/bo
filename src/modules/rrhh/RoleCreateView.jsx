@@ -19,9 +19,9 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
     addRole,
     currentUser,
     hasPermission,
-    hasGlobalPermission, // 👈 INYECCIÓN: Traemos la función Global
+    hasGlobalPermission, 
     skins,
-    sites,
+    sites, // 👈 Requerido para hacer el puente lógico
     roles,
     contracts,
   } = useData();
@@ -35,10 +35,8 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
   );
   const [selectedSkinId, setSelectedSkinId] = useState('');
 
-  // 👇 ARQUITECTURA DUAL
   const [globalPermissions, setGlobalPermissions] = useState({});
   const [skinPermissions, setSkinPermissions] = useState({});
-
   const [expandedModule, setExpandedModule] = useState(null);
 
   const userRoleData = roles.find((r) => r.id === currentUser.roleId);
@@ -46,9 +44,26 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
     ...new Set([...currentUser.allowedSkins, ...(userRoleData?.skins || [])]),
   ];
 
-  const assignableSkins = skins.filter((s) =>
-    combinedAllowedSkins.includes(s.id)
-  );
+  // 👇 FILTRO B2B CORREGIDO: Mapeo exacto basado en la jerarquía (Skin -> Site -> Contract)
+  const assignableSkins = skins.filter((skin) => {
+    // 1. ¿El usuario logueado tiene permiso de ver esta skin?
+    const isAllowedByUser = combinedAllowedSkins.includes(skin.id);
+    
+    // 2. Si no hay contrato seleccionado en el combo, no mostrar nada.
+    if (!contractId) return false;
+
+    // 3. Si se seleccionó la matriz (Universal Soft c-001), mostrar todo lo permitido.
+    if (contractId === 'c-001') return isAllowedByUser;
+
+    // 4. LÓGICA CORREGIDA: Si se seleccionó un Cliente (Ej. GoldenBet)
+    // Buscamos el "Site" al que pertenece esta Skin
+    const parentSite = sites.find((s) => s.id === skin.siteId);
+    
+    // Verificamos si ese "Site" le pertenece al contrato seleccionado
+    const isSkinFromThisContract = parentSite && parentSite.contractId === contractId;
+
+    return isAllowedByUser && isSkinFromThisContract;
+  });
 
   const skinsBySite = assignableSkins.reduce((acc, skin) => {
     const parentSite = sites.find((s) => s.id === skin.siteId);
@@ -61,7 +76,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
     return acc;
   }, {});
 
-  // 👇 FILTRO GLOBAL (Tenant Isolation)
   const allowedGlobalModules = GLOBAL_CATALOG.filter((modulo) => {
     if (contractId === 'c-001') return true;
     return modulo.isAdminOnly !== true;
@@ -77,7 +91,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
   };
 
   const handleSave = () => {
-    // 👇 CORRECCIÓN: Ahora evaluamos el poder a Nivel Global
     if (!hasGlobalPermission('rol_create_act'))
       return alert(
         'Acceso Denegado: No tienes permiso de ACCIÓN para crear nuevos roles.'
@@ -86,7 +99,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
     if (isSuperAdmin && !contractId)
       return alert('Debe seleccionar a qué Empresa pertenece este cargo.');
 
-    // 👇 LIMPIEZA DE PERMISOS GLOBALES: Solo guardamos los que están activos (true)
     const cleanedGlobalPermissions = Object.entries(globalPermissions).reduce(
       (acc, [permId, isActive]) => {
         if (isActive) acc[permId] = true;
@@ -95,7 +107,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
       {}
     );
 
-    // 👇 LIMPIEZA DE PERMISOS LOCALES: Solo guardamos las skins que tienen al menos un permiso activo
     const cleanedSkinPermissions = Object.entries(skinPermissions).reduce(
       (acc, [skinId, perms]) => {
         const activePermsForSkin = Object.entries(perms).reduce(
@@ -105,7 +116,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
           },
           {}
         );
-        // Solo guardamos la skin si tiene al menos un permiso activo
         if (Object.keys(activePermsForSkin).length > 0) {
           acc[skinId] = activePermsForSkin;
         }
@@ -118,8 +128,8 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
       name,
       description: desc,
       skins: selectedSkinId ? [selectedSkinId] : [],
-      globalPermissions: cleanedGlobalPermissions, // 👈 Enviamos la matriz Global limpia
-      skinPermissions: cleanedSkinPermissions, // 👈 Enviamos la matriz Local limpia
+      globalPermissions: cleanedGlobalPermissions,
+      skinPermissions: cleanedSkinPermissions,
       baseSkin: selectedSkinId || (isSuperAdmin ? '' : currentSkin.id),
       contractId: contractId,
     });
@@ -128,7 +138,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
     if (onCloseTab) onCloseTab();
   };
 
-  // MANEJADORES GLOBALES
   const toggleGlobalPermission = (skinIdIgnored, permId) => {
     setGlobalPermissions((prev) => ({
       ...prev,
@@ -147,7 +156,6 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
     });
   };
 
-  // MANEJADORES LOCALES
   const toggleLocalPermission = (skinId, permId) => {
     setSkinPermissions((prev) => {
       const skinPerms = prev[skinId] || {};
@@ -314,7 +322,7 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
                 {isOpen && (
                   <PermissionGrid
                     module={module}
-                    rolePermissions={{ global: globalPermissions }} // 👈 TRUCO PARA REUSAR TU COMPONENTE
+                    rolePermissions={{ global: globalPermissions }}
                     selectedSkinId="global"
                     togglePermission={toggleGlobalPermission}
                   />
@@ -415,6 +423,17 @@ export const RoleCreateView = ({ onNavigate, onCloseTab, currentSkin }) => {
               </div>
             </div>
           ))}
+          
+          {assignableSkins.length === 0 && contractId && (
+            <div className="p-4 text-center text-slate-500 text-xs italic border border-dashed border-slate-800 rounded-xl">
+              Esta empresa aún no tiene ninguna marca o entorno (Skin) creado en el sistema.
+            </div>
+          )}
+          {assignableSkins.length === 0 && !contractId && (
+            <div className="p-4 text-center text-slate-500 text-xs italic border border-dashed border-slate-800 rounded-xl">
+              Seleccione una Empresa Asignada arriba para visualizar las Skins disponibles.
+            </div>
+          )}
         </div>
       </div>
 

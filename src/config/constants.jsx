@@ -611,4 +611,4 @@ export const FULL_LOCAL_MATRIX = LOCAL_CATALOG.reduce((acc, mod) => {
 }, {});
 
 // 👇 INYECCIÓN DE VERSIÓN APLICADA: Gatillo para reinicio seguro a Arquitectura Dual
-export const DB_VERSION = 'V.4.0.2-Arquitectura';
+export const DB_VERSION = 'V.4.0.3-Arquitectura';
