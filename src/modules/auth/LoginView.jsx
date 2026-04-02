@@ -48,6 +48,7 @@ export const LoginView = ({ onLogin }) => {
 
       // Si pasa la validación, inyectamos su ADN al sistema
       onLogin({
+        id: foundUser.id, // 👈 SOLUCIÓN CRÍTICA: Inyección del ID para el Motor de Linaje
         user: foundUser.user,
         name: foundUser.name,
         initials:

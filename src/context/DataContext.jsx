@@ -24,6 +24,7 @@ export const DataProvider = ({ children, currentUser }) => {
       origin: 'Predefinido',
       status: 'active',
       contractId: 'c-001', // 👈 ¡ADN DE PROPIEDAD SINCRONIZADO AL DÍA 0!
+      createdBy: 'SYSTEM', // 👈 LINAJE DE PADRES: Creador Raíz
       skins: [
         // UNIVERSAL RACE
         'ur_pe_pen',
@@ -71,6 +72,7 @@ export const DataProvider = ({ children, currentUser }) => {
       roleId: '00001',
       status: 'active',
       contractId: 'c-001', // 👈 ¡ADN CORPORATIVO SINCRONIZADO AL DÍA 0!
+      createdBy: 'SYSTEM', // 👈 LINAJE DE PADRES: Creador Raíz
       skins: [
         // UNIVERSAL RACE
         'ur_pe_pen',
@@ -284,7 +286,7 @@ export const DataProvider = ({ children, currentUser }) => {
     return userRole.skinPermissions[skinId][permId] === true;
   };
 
-  // 👇 MODIFICACIÓN APLICADA: Inyección estricta de Empresa (contractId) y Skins
+  // 👇 MODIFICACIÓN APLICADA: Inyección estricta de Empresa (contractId) y Skins y LINAJE (createdBy)
   const addRole = (newRole) => {
     const roleToSave = {
       id: `R${Date.now().toString().slice(-4)}`,
@@ -297,6 +299,7 @@ export const DataProvider = ({ children, currentUser }) => {
       skinPermissions: newRole.skinPermissions || {}, // 👈 ARQUITECTURA DUAL
       baseSkin: newRole.baseSkin,
       contractId: newRole.contractId, // 👈 SOLUCIÓN CRÍTICA: Ahora sí guarda la Empresa dueña
+      createdBy: currentUser ? currentUser.id : 'SYSTEM', // 👈 LINAJE DE PADRES: El usuario en sesión es el creador
     };
     setRoles((prev) => [...prev, roleToSave]);
   };
@@ -306,7 +309,7 @@ export const DataProvider = ({ children, currentUser }) => {
       prev.map((r) => (r.id === updatedRole.id ? updatedRole : r))
     );
 
-  // 👇 MODIFICACIÓN APLICADA: Clones heredan estrictamente la empresa original
+  // 👇 MODIFICACIÓN APLICADA: Clones heredan estrictamente la empresa original y asumen nuevo linaje
   const cloneRole = (roleId) => {
     const original = roles.find((r) => r.id === roleId);
     if (!original) return;
@@ -318,6 +321,7 @@ export const DataProvider = ({ children, currentUser }) => {
         name: `${original.name} (Copia)`,
         origin: 'Personalizado',
         contractId: original.contractId, // 👈 PROTECCIÓN: El clon pertenece a la misma empresa
+        createdBy: currentUser ? currentUser.id : 'SYSTEM', // 👈 LINAJE DE PADRES: El clon pertenece a quien lo clonó
         baseSkin:
           original.baseSkin ||
           (original.skins && original.skins.length > 0
@@ -346,6 +350,7 @@ export const DataProvider = ({ children, currentUser }) => {
       name: fullName,
       id: `E${Date.now().toString().slice(-4)}`,
       skins: [],
+      createdBy: currentUser ? currentUser.id : 'SYSTEM', // 👈 LINAJE DE PADRES
     };
     setEmployees((prev) => [...prev, empWithId]);
   };

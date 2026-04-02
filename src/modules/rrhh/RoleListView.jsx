@@ -45,24 +45,35 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
   const isSuperAdmin = currentUser?.contractId === 'c-001';
   const isGlobalOnlyUser = combinedAllowedSkins.length === 0;
 
-  // 👇 1. TABLA BASE BLINDADA (Muro de Seguridad Zero Trust)
+  // 👇 INYECCIÓN ARQUITECTÓNICA: Motor Recursivo de Linaje (Topología Vertical)
+  const isDescendantCreator = (creatorId, visited = new Set()) => {
+    // Si llegamos a la raíz del sistema o no hay creador, no es descendencia
+    if (!creatorId || creatorId === 'SYSTEM') return false;
+    // Si el creador en este nivel es el usuario actual, ¡es descendencia directa o indirecta!
+    if (creatorId === currentUser.id) return true;
+
+    // Prevención de loops infinitos por data corrupta
+    if (visited.has(creatorId)) return false;
+    visited.add(creatorId);
+
+    // Buscar quién creó al empleado que figura como creador
+    const creatorEmp = employees.find((e) => e.id === creatorId);
+    if (!creatorEmp) return false;
+
+    // Recursión hacia arriba en el árbol
+    return isDescendantCreator(creatorEmp.createdBy, visited);
+  };
+
+  // 1. TABLA BASE BLINDADA (Muro de Seguridad Zero Trust Horizontal)
   const baseRoles = roles.filter((role) => {
-    // Filtro Horizontal B2B (Muro de Contención Estricto)
-    // Nadie externo puede ver cargos de otras empresas, EXCEPTO la plantilla 00001
     if (!isSuperAdmin) {
       if (role.id !== '00001' && role.contractId !== currentUser.contractId) {
         return false;
       }
     }
-
-    // La plantilla 00001 la ven todos
     if (role.origin === 'Predefinido') return true;
-
-    // Filtro Vertical (Jurisdicción de Visibilidad)
-    // Si soy Global de MI empresa, veo todos mis cargos
     if (isGlobalOnlyUser) return true;
 
-    // Si soy Operativo, solo veo los que cruzan con mis skins
     const s = role.skins || [];
     if (s.length === 0) {
       return role.baseSkin
@@ -72,13 +83,12 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
     return s.some((skin) => combinedAllowedSkins.includes(skin));
   });
 
-  // 👇 2. FILTRO DE SKINS SEGURO
+  // 2. FILTRO DE SKINS SEGURO
   const visibleSkinsForFilter = (() => {
     if (isSuperAdmin) return skins;
 
     const activeSkinIds = new Set();
     baseRoles.forEach((role) => {
-      // Si es un cliente (Global o no), solo recopila skins de SUS cargos propios
       if (role.id !== '00001') {
         const s = role.skins || [];
         s.forEach((id) => activeSkinIds.add(id));
@@ -326,7 +336,7 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
         className={`${THEME.panel} rounded-xl border ${THEME.border} overflow-x-auto overflow-y-auto shadow-xl flex-1 relative custom-scrollbar z-10`}
       >
         <table className="w-full text-left text-sm text-slate-300">
-          <thead className="bg-[#0f1522] text-xs uppercase text-slate-500 font-bold tracking-wider sticky top-0 z-10 shadow-sm">
+          <thead className="bg-[#0f1522] text-xs uppercase text-slate-500 font-bold tracking-wider sticky top-0 z-10 shadow-sm border-b border-slate-800">
             <tr>
               <th className="p-4 whitespace-nowrap">ID</th>
               <th className="p-4 text-left whitespace-nowrap">Cargo</th>
@@ -348,30 +358,31 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                 (c) => c.id === roleContractId
               );
 
+              // 👇 INYECCIÓN: Evaluación Multicapa para el Muro de "Solo Lectura"
               const isPredefined = role.id === '00001';
-              const isExternal =
-                !isSuperAdmin && roleContractId !== currentUser.contractId;
+              const isExternal = !isSuperAdmin && roleContractId !== currentUser.contractId;
+              const isMyRole = role.id === currentUser.roleId; // Inmutabilidad propia
+              const hasLineageAccess = isSuperAdmin || isDescendantCreator(role.createdBy);
 
-              // 👇 PROTECCIÓN DE SKINS:
-              // Si es SuperAdmin, ve todas las skins.
-              // Si es Global de la empresa, ve todas las skins DE SU EMPRESA,
-              // pero NO ve las skins ajenas en el cargo Predefinido (las verá "Ocultas" intencionalmente).
+              // Condición Final absoluta para bloquear acciones
+              const isReadOnly = isExternal || isPredefined || isMyRole || !hasLineageAccess;
+
               let displaySkins = [];
               let allowedSkinsForStack = combinedAllowedSkins;
 
               if (isSuperAdmin) {
                 displaySkins = role.skins || [];
-                allowedSkinsForStack = null; // Muestra todas libremente
+                allowedSkinsForStack = null;
               } else if (isGlobalOnlyUser) {
                 if (isPredefined) {
-                  displaySkins = []; // Esconde las skins de UniversalSoft al cliente externo
+                  displaySkins = [];
                 } else {
                   displaySkins = role.skins || [];
-                  allowedSkinsForStack = null; // Muestra todas las de SU empresa libremente
+                  allowedSkinsForStack = null;
                 }
               } else {
                 displaySkins = role.skins || [];
-                allowedSkinsForStack = combinedAllowedSkins; // Operativo: Cruza con sus skins
+                allowedSkinsForStack = combinedAllowedSkins;
               }
 
               return (
@@ -415,15 +426,24 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                     {empCount}
                   </td>
                   <td className="p-4 text-center whitespace-nowrap">
-                    {isExternal ? (
+                    {/* 👇 INYECCIÓN: Renderizado Condicional del Blindaje */}
+                    {isReadOnly ? (
                       <div className="flex justify-center">
-                        <span className="text-[10px] text-slate-500 italic bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
-                          Solo Lectura
+                        <span 
+                          className="text-[10px] text-slate-400 italic bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700 cursor-help flex items-center gap-1.5"
+                          title={
+                            isExternal ? "Aislamiento B2B: Cargo pertenece a otra empresa." :
+                            isPredefined ? "Inmunidad: Plantilla Global del Sistema." :
+                            isMyRole ? "Inmutabilidad de Sesión: No puedes auto-editar tu cargo." :
+                            "Jerarquía de Linaje: Este cargo fue creado por un superior o fuera de tu descendencia."
+                          }
+                        >
+                          <Shield size={10} className="text-slate-500" /> Solo Lectura
                         </span>
                       </div>
                     ) : (
                       <div className="flex items-center justify-center gap-2">
-                        {canEdit && !isPredefined ? (
+                        {canEdit ? (
                           <button
                             onClick={() =>
                               onNavigate(
@@ -440,12 +460,12 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                         ) : (
                           <div
                             className="p-2 text-slate-700 opacity-50"
-                            title="Solo Lectura"
+                            title="Sin Permiso de Edición"
                           >
                             <Edit3 size={16} />
                           </div>
                         )}
-                        {canManageSkins && !isPredefined ? (
+                        {canManageSkins ? (
                           <button
                             onClick={() =>
                               onNavigate(
@@ -462,7 +482,7 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                         ) : (
                           <div
                             className="p-2 text-slate-700 opacity-50"
-                            title="Solo Lectura"
+                            title="Sin Permiso de Skins"
                           >
                             <Globe size={16} />
                           </div>
@@ -483,7 +503,7 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                         ) : (
                           <div
                             className="p-2 text-slate-700 opacity-50"
-                            title="Solo Lectura"
+                            title="Sin Permiso de Clonación"
                           >
                             <Copy size={16} />
                           </div>
