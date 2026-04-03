@@ -25,13 +25,12 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
     employees,
     roles,
     toggleEmployeeStatus,
-    hasGlobalPermission, // 👈 INYECCIÓN: Usamos el poder Global
+    hasGlobalPermission, 
     currentUser,
     skins,
     contracts,
   } = useData();
 
-  // 👇 CORRECCIÓN: Botones evalúan permisos a Nivel Global
   const canCreate = hasGlobalPermission('emp_ui_fab_add');
   const canViewDetail = hasGlobalPermission('emp_ui_btn_view');
   const canLock = hasGlobalPermission('emp_ui_btn_lock');
@@ -39,7 +38,7 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
 
   const userRoleData = roles.find((r) => r.id === currentUser.roleId);
   const combinedAllowedSkins = [
-    ...new Set([...currentUser.allowedSkins, ...(userRoleData?.skins || [])]),
+    ...new Set([...(currentUser.allowedSkins || []), ...(userRoleData?.skins || [])]),
   ];
 
   const allowedSkinObjects = skins.filter((s) =>
@@ -48,35 +47,36 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
 
   const isSuperAdmin = currentUser?.contractId === 'c-001';
 
-  // 👇 1. LEY MATEMÁTICA ZERO TRUST (Tabla Base)
-  const baseEmployees = employees.filter((emp) => {
-    // A. La Matriz ve a todos
-    if (isSuperAdmin) return true;
+  // 👇 INYECCIÓN FALTANTE: MOTOR DE LINAJE 
+  const isDescendantCreator = (creatorId, visited = new Set()) => {
+    if (!creatorId || creatorId === 'SYSTEM') return false;
+    if (creatorId === currentUser.id) return true;
+    if (visited.has(creatorId)) return false;
+    visited.add(creatorId);
+    const creatorEmp = employees.find((e) => e.id === creatorId);
+    if (!creatorEmp) return false;
+    return isDescendantCreator(creatorEmp.createdBy, visited);
+  };
 
-    // B. El inquilino SIEMPRE ve a los suyos
+  const baseEmployees = employees.filter((emp) => {
+    if (isSuperAdmin) return true;
     if (emp.contractId === currentUser.contractId) return true;
 
-    // C. El inquilino ve a la Matriz SOLO SI la matriz le da soporte en esta jurisdicción
     if (emp.contractId === 'c-001') {
       const empRole = roles.find((r) => r.id === emp.roleId);
       const empSkins = empRole ? empRole.skins || [] : emp.skins || [];
       return empSkins.includes(currentSkin?.id);
     }
-
-    // D. Inquilinos cruzados bloqueados
     return false;
   });
 
-  // 👇 2. FILTRO SEGURO DE CARGOS (Consistencia Visual B2B2C)
   const visibleRoles = (() => {
     if (isSuperAdmin) return roles;
 
-    // Cargos que le pertenecen al Inquilino (GoldenBet)
     const myRoles = roles.filter(
       (r) => r.contractId === currentUser.contractId
     );
 
-    // Cargos de empleados de la Matriz que SÍ están visibles en su tabla actual (Ej: Cristian Sam)
     const externalVisibleRoleIds = baseEmployees
       .filter((emp) => emp.contractId !== currentUser.contractId)
       .map((emp) => emp.roleId);
@@ -85,7 +85,6 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
       externalVisibleRoleIds.includes(r.id)
     );
 
-    // Unimos ambas listas sin duplicados
     const combined = [...myRoles, ...externalRoles];
     return Array.from(new Map(combined.map((r) => [r.id, r])).values());
   })();
@@ -450,8 +449,19 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
                 ? currentSkins
                 : currentSkins.filter((s) => combinedAllowedSkins.includes(s));
 
-              const isExternal =
-                !isSuperAdmin && emp.contractId !== currentUser.contractId;
+              // 👇 LA LEY SUPREMA: PODER ABSOLUTO EXTERNO, JERARQUÍA ESTRICTA INTERNA
+              const isMyProfile = emp.id === currentUser.id;
+              
+              const isRootGod = currentUser?.roleId === '00001';
+              const isMatrixStaff = currentUser?.contractId === 'c-001';
+              const isExternalTarget = emp.contractId !== currentUser.contractId;
+
+              const hasLineageAccess = 
+                isRootGod || 
+                (isMatrixStaff && isExternalTarget) || 
+                isDescendantCreator(emp.createdBy);
+
+              const isReadOnly = (isExternalTarget && !isMatrixStaff) || isMyProfile || !hasLineageAccess;
 
               return (
                 <tr
@@ -472,7 +482,7 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
                     <div className="flex flex-col">
                       <span className="font-bold text-white flex items-center gap-1.5">
                         {empContract?.companyName || 'Desconocido'}
-                        {isExternal && (
+                        {(isExternalTarget && !isMatrixStaff) && (
                           <Shield
                             size={12}
                             className="text-[#D10057]"
@@ -511,7 +521,7 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
                     </span>
                   </td>
                   <td className="p-4 text-center whitespace-nowrap min-w-[120px]">
-                    {!isExternal ? (
+                    {!isReadOnly ? (
                       <div className="flex items-center justify-center gap-2">
                         {canViewDetail && (
                           <button className="p-2 text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors">
@@ -521,7 +531,6 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
                         {canLock && (
                           <button
                             onClick={() => {
-                              // 👇 CORRECCIÓN: Evaluación del poder Global
                               if (!hasGlobalPermission('emp_lock_act'))
                                 return alert(
                                   'Acceso Denegado: No tienes permiso de ACCIÓN para bloquear empleados.'
@@ -545,8 +554,15 @@ export const EmployeeListView = ({ onNavigate, currentSkin }) => {
                       </div>
                     ) : (
                       <div className="flex justify-center">
-                        <span className="text-[10px] text-slate-500 italic bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
-                          Solo Lectura
+                        <span 
+                          className="text-[10px] text-slate-500 italic bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700 cursor-help"
+                          title={
+                            isExternalTarget && !isMatrixStaff ? "Aislamiento B2B: Empleado pertenece a otra empresa." :
+                            isMyProfile ? "Inmutabilidad de Sesión: No puedes suspenderte a ti mismo." :
+                            "Jerarquía de Linaje: Este empleado es un superior o fuera de tu descendencia."
+                          }
+                        >
+                          <Shield size={10} className="inline mr-1" /> Solo Lectura
                         </span>
                       </div>
                     )}

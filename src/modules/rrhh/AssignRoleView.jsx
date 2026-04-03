@@ -16,50 +16,52 @@ export const AssignRoleView = ({ currentSkin }) => {
     employees,
     roles,
     assignRoleToEmployee,
-    hasGlobalPermission, // 👈 INYECCIÓN: Usamos el poder Global
+    hasGlobalPermission, 
     currentUser,
     skins,
     contracts,
   } = useData();
 
-  // 👇 CORRECCIÓN: Evalúa permiso a nivel Empresa (Global)
   const canSelect = hasGlobalPermission('assig_ui_select');
 
   const userRoleData = roles.find((r) => r.id === currentUser.roleId);
   const combinedAllowedSkins = [
-    ...new Set([...currentUser.allowedSkins, ...(userRoleData?.skins || [])]),
+    ...new Set([...(currentUser.allowedSkins || []), ...(userRoleData?.skins || [])]),
   ];
 
   const isSuperAdmin = currentUser?.contractId === 'c-001';
 
-  // 👇 EL FILTRO REPARADO
+  // 👇 MOTOR DE LINAJE
+  const isDescendantCreator = (creatorId, visited = new Set()) => {
+    if (!creatorId || creatorId === 'SYSTEM') return false;
+    if (creatorId === currentUser.id) return true;
+    if (visited.has(creatorId)) return false;
+    visited.add(creatorId);
+    const creatorEmp = employees.find((e) => e.id === creatorId);
+    if (!creatorEmp) return false;
+    return isDescendantCreator(creatorEmp.createdBy, visited);
+  };
+
   const visibleEmployees = employees.filter((emp) => {
     const isMyEmployee = emp.contractId === currentUser.contractId;
     const isProviderGuest = emp.contractId === 'c-001';
 
-    // 1. Filtro base de Tenant Isolation (Inquilinos)
     if (!isSuperAdmin && !isMyEmployee && !isProviderGuest) {
       return false;
     }
 
-    // 2. Proteger el Cargo de Gerente General
     if (emp.roleId === '00001' && !isSuperAdmin) {
       return false;
     }
 
-    // 👇 LA SOLUCIÓN: Visión de Rayos X para Corporativos
-    // Si eres el SuperAdmin, o si eres un usuario puramente Global (CTO, QA sin skins),
-    // tienes derecho absoluto a ver a todos los empleados de tu empresa que pasaron el filtro de arriba.
     if (isSuperAdmin || combinedAllowedSkins.length === 0) {
       return true;
     }
 
-    // 3. Filtro para Mánagers Operativos (Los que SÍ tienen skins)
     const empRole = roles.find((r) => r.id === emp.roleId);
     const s = empRole ? empRole.skins || [] : [];
 
     if (s.length === 0) {
-      // Si el empleado no tiene skin base (fue creado por un global), permite verlo para rescatarlo
       if (!emp.baseSkin) return true;
       return combinedAllowedSkins.includes(emp.baseSkin);
     }
@@ -67,7 +69,6 @@ export const AssignRoleView = ({ currentSkin }) => {
     return s.some((skin) => combinedAllowedSkins.includes(skin));
   });
 
-  // Cargos Visibles en general para el usuario actual
   const visibleRoles = roles.filter((role) => {
     const roleSkinObj = skins.find((s) => s.id === role.baseSkin);
     const roleContractId =
@@ -95,7 +96,6 @@ export const AssignRoleView = ({ currentSkin }) => {
     );
   });
 
-  // 👇 INICIO SECCIÓN DE FILTROS ESTANDARIZADOS
   const availableContractsForFilter = [
     ...new Set(visibleEmployees.map((emp) => emp.contractId)),
   ]
@@ -131,7 +131,6 @@ export const AssignRoleView = ({ currentSkin }) => {
     });
     setFilteredList(result);
   };
-  // 👆 FIN SECCIÓN DE FILTROS
 
   return (
     <div className="p-8 h-full flex flex-col text-slate-200 animate-in fade-in">
@@ -141,7 +140,6 @@ export const AssignRoleView = ({ currentSkin }) => {
           icon={UserCog}
           currentSkin={currentSkin}
         />
-        {/* 👇 BOTÓN DE FILTROS */}
         <div className="absolute right-0 top-0 hidden sm:flex items-center gap-3">
           <button
             onClick={() => setIsFilterOpen(!isFilterOpen)}
@@ -158,7 +156,6 @@ export const AssignRoleView = ({ currentSkin }) => {
         </div>
       </div>
 
-      {/* 👇 PANEL DE FILTROS */}
       <div
         className={`transition-all duration-300 ease-in-out flex-shrink-0 z-20 ${
           isFilterOpen
@@ -254,7 +251,7 @@ export const AssignRoleView = ({ currentSkin }) => {
       >
         <div className="overflow-x-auto overflow-y-auto custom-scrollbar flex-1 relative">
           <table className="w-full text-left text-sm text-slate-300">
-            <thead className="bg-[#0f1522] text-xs uppercase text-slate-500 font-bold sticky top-0 z-10 shadow-sm">
+            <thead className="bg-[#0f1522] text-xs uppercase text-slate-500 font-bold sticky top-0 z-10 shadow-sm border-b border-slate-800">
               <tr>
                 <th className="p-4 whitespace-nowrap">ID Empleado</th>
                 <th className="p-4 whitespace-nowrap">Empleado</th>
@@ -281,7 +278,6 @@ export const AssignRoleView = ({ currentSkin }) => {
                   (c) => c.id === emp.contractId
                 );
 
-                // 👇 LÓGICA: Encontrar la empresa dueña del Cargo Actual
                 let roleContract = null;
                 if (currentEmpRole) {
                   const roleSkinObj = skins.find(
@@ -297,7 +293,6 @@ export const AssignRoleView = ({ currentSkin }) => {
                   );
                 }
 
-                // 👇 REGLA ESTRICTA APLICADA INTACTA:
                 const availableRolesForEmp = visibleRoles.filter((r) => {
                   const roleSkinObj = skins.find((s) => s.id === r.baseSkin);
                   const roleContractId =
@@ -308,6 +303,20 @@ export const AssignRoleView = ({ currentSkin }) => {
 
                   return roleContractId === emp.contractId;
                 });
+
+                // 👇 LA LEY SUPREMA: PODER ABSOLUTO EXTERNO, JERARQUÍA ESTRICTA INTERNA
+                const isMyProfile = emp.id === currentUser.id;
+                
+                const isRootGod = currentUser?.roleId === '00001';
+                const isMatrixStaff = currentUser?.contractId === 'c-001';
+                const isExternalTarget = emp.contractId !== currentUser.contractId;
+
+                const hasLineageAccess = 
+                  isRootGod || 
+                  (isMatrixStaff && isExternalTarget) || 
+                  isDescendantCreator(emp.createdBy);
+
+                const isReadOnly = (isExternalTarget && !isMatrixStaff) || isMyProfile || !hasLineageAccess;
 
                 return (
                   <tr
@@ -326,7 +335,6 @@ export const AssignRoleView = ({ currentSkin }) => {
                       </div>
                     </td>
 
-                    {/* 👇 MODIFICACIÓN: Empresa del Empleado Agrupada */}
                     {isSuperAdmin && (
                       <td className="p-4 whitespace-nowrap">
                         <div className="flex flex-col">
@@ -369,7 +377,6 @@ export const AssignRoleView = ({ currentSkin }) => {
                       </div>
                     </td>
 
-                    {/* 👇 MODIFICACIÓN: Nueva celda Empresa del Cargo Agrupada */}
                     {isSuperAdmin && (
                       <td className="p-4 whitespace-nowrap">
                         {roleContract ? (
@@ -397,13 +404,26 @@ export const AssignRoleView = ({ currentSkin }) => {
                     )}
 
                     <td className="p-4 text-center whitespace-nowrap">
-                      {canSelect ? (
+                      {(!canSelect || isReadOnly) ? (
+                        <div className="flex justify-center">
+                          <span 
+                            className="text-[10px] text-slate-400 italic bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700 cursor-help flex items-center gap-1.5"
+                            title={
+                              !canSelect ? "Sin Permiso: No tienes la acción de asignar roles." :
+                              isExternalTarget && !isMatrixStaff ? "Aislamiento B2B: Empleado pertenece a otra empresa." :
+                              isMyProfile ? "Inmutabilidad de Sesión: No puedes auto-asignarte un cargo." :
+                              "Jerarquía de Linaje: Este empleado es un superior o fuera de tu descendencia."
+                            }
+                          >
+                            <Shield size={10} className="text-slate-500" /> Solo Lectura
+                          </span>
+                        </div>
+                      ) : (
                         <div className="flex justify-center">
                           <select
                             className={`w-[250px] ${THEME.select} p-2 rounded-lg text-sm`}
                             value={emp.roleId || ''}
                             onChange={(e) => {
-                              // 👇 CORRECCIÓN: Acción evaluada con poder Global
                               if (!hasGlobalPermission('assig_upd_act')) {
                                 alert(
                                   'Acceso Denegado: No tienes permiso de ACCIÓN para reasignar cargos.'
@@ -415,7 +435,6 @@ export const AssignRoleView = ({ currentSkin }) => {
                             }}
                           >
                             <option value="">-- Desvincular --</option>
-                            {/* 👇 REGLA ESTRICTA APLICADA: Solo se mapean los roles permitidos */}
                             {availableRolesForEmp.map((r) => (
                               <option key={r.id} value={r.id}>
                                 {r.name}
@@ -423,10 +442,6 @@ export const AssignRoleView = ({ currentSkin }) => {
                             ))}
                           </select>
                         </div>
-                      ) : (
-                        <span className="text-[10px] text-slate-500 italic bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">
-                          Solo Lectura
-                        </span>
                       )}
                     </td>
                   </tr>

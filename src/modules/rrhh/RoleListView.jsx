@@ -42,29 +42,21 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
     ]),
   ];
 
+  // Esto mantiene la visibilidad (Los de c-001 ven todo)
   const isSuperAdmin = currentUser?.contractId === 'c-001';
   const isGlobalOnlyUser = combinedAllowedSkins.length === 0;
 
-  // 👇 INYECCIÓN ARQUITECTÓNICA: Motor Recursivo de Linaje (Topología Vertical)
+  // 👇 MOTOR DE LINAJE
   const isDescendantCreator = (creatorId, visited = new Set()) => {
-    // Si llegamos a la raíz del sistema o no hay creador, no es descendencia
     if (!creatorId || creatorId === 'SYSTEM') return false;
-    // Si el creador en este nivel es el usuario actual, ¡es descendencia directa o indirecta!
     if (creatorId === currentUser.id) return true;
-
-    // Prevención de loops infinitos por data corrupta
     if (visited.has(creatorId)) return false;
     visited.add(creatorId);
-
-    // Buscar quién creó al empleado que figura como creador
     const creatorEmp = employees.find((e) => e.id === creatorId);
     if (!creatorEmp) return false;
-
-    // Recursión hacia arriba en el árbol
     return isDescendantCreator(creatorEmp.createdBy, visited);
   };
 
-  // 1. TABLA BASE BLINDADA (Muro de Seguridad Zero Trust Horizontal)
   const baseRoles = roles.filter((role) => {
     if (!isSuperAdmin) {
       if (role.id !== '00001' && role.contractId !== currentUser.contractId) {
@@ -83,7 +75,6 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
     return s.some((skin) => combinedAllowedSkins.includes(skin));
   });
 
-  // 2. FILTRO DE SKINS SEGURO
   const visibleSkinsForFilter = (() => {
     if (isSuperAdmin) return skins;
 
@@ -358,14 +349,20 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                 (c) => c.id === roleContractId
               );
 
-              // 👇 INYECCIÓN: Evaluación Multicapa para el Muro de "Solo Lectura"
+              // 👇 LA LEY SUPREMA: PODER ABSOLUTO EXTERNO, JERARQUÍA ESTRICTA INTERNA
               const isPredefined = role.id === '00001';
-              const isExternal = !isSuperAdmin && roleContractId !== currentUser.contractId;
-              const isMyRole = role.id === currentUser.roleId; // Inmutabilidad propia
-              const hasLineageAccess = isSuperAdmin || isDescendantCreator(role.createdBy);
+              const isMyRole = role.id === currentUser.roleId; 
+              
+              const isRootGod = currentUser?.roleId === '00001';
+              const isMatrixStaff = currentUser?.contractId === 'c-001';
+              const isExternalTarget = roleContractId !== currentUser.contractId;
 
-              // Condición Final absoluta para bloquear acciones
-              const isReadOnly = isExternal || isPredefined || isMyRole || !hasLineageAccess;
+              const hasLineageAccess = 
+                isRootGod || 
+                (isMatrixStaff && isExternalTarget) || 
+                isDescendantCreator(role.createdBy);
+
+              const isReadOnly = (isExternalTarget && !isMatrixStaff) || isPredefined || isMyRole || !hasLineageAccess;
 
               let displaySkins = [];
               let allowedSkinsForStack = combinedAllowedSkins;
@@ -400,7 +397,7 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                     <div className="flex flex-col">
                       <span className="font-bold text-white flex items-center gap-1.5">
                         {roleContract?.companyName || 'UniversalSoft Internal'}
-                        {(isPredefined || isExternal) && (
+                        {(isPredefined || (isExternalTarget && !isMatrixStaff)) && (
                           <Shield
                             size={12}
                             className="text-[#D10057]"
@@ -426,13 +423,12 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                     {empCount}
                   </td>
                   <td className="p-4 text-center whitespace-nowrap">
-                    {/* 👇 INYECCIÓN: Renderizado Condicional del Blindaje */}
                     {isReadOnly ? (
                       <div className="flex justify-center">
                         <span 
                           className="text-[10px] text-slate-400 italic bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700 cursor-help flex items-center gap-1.5"
                           title={
-                            isExternal ? "Aislamiento B2B: Cargo pertenece a otra empresa." :
+                            isExternalTarget && !isMatrixStaff ? "Aislamiento B2B: Cargo pertenece a otra empresa." :
                             isPredefined ? "Inmunidad: Plantilla Global del Sistema." :
                             isMyRole ? "Inmutabilidad de Sesión: No puedes auto-editar tu cargo." :
                             "Jerarquía de Linaje: Este cargo fue creado por un superior o fuera de tu descendencia."
