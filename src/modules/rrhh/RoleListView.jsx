@@ -42,25 +42,42 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
     ]),
   ];
 
-  // Esto mantiene la visibilidad (Los de c-001 ven todo)
   const isSuperAdmin = currentUser?.contractId === 'c-001';
   const isGlobalOnlyUser = combinedAllowedSkins.length === 0;
 
-  // 👇 MOTOR DE LINAJE
+  // 👇 MOTOR DE LINAJE ACTUALIZADO
   const isDescendantCreator = (creatorId, visited = new Set()) => {
     if (!creatorId || creatorId === 'SYSTEM') return false;
     if (creatorId === currentUser.id) return true;
+
+    // REGLA APROBADA: Permitir edición lateral (Hermanos)
+    const currentEmp = employees.find((e) => e.id === currentUser.id);
+    const rowCreatorEmp = employees.find((e) => e.id === creatorId);
+    
+    if (currentEmp && rowCreatorEmp && currentEmp.createdBy === rowCreatorEmp.createdBy && currentEmp.createdBy !== 'SYSTEM') {
+      return true;
+    }
+
     if (visited.has(creatorId)) return false;
     visited.add(creatorId);
-    const creatorEmp = employees.find((e) => e.id === creatorId);
-    if (!creatorEmp) return false;
-    return isDescendantCreator(creatorEmp.createdBy, visited);
+    
+    if (!rowCreatorEmp) return false;
+    return isDescendantCreator(rowCreatorEmp.createdBy, visited);
   };
 
   const baseRoles = roles.filter((role) => {
     if (!isSuperAdmin) {
       if (role.id !== '00001' && role.contractId !== currentUser.contractId) {
-        return false;
+        // EXCEPCIÓN "MURO DE CRISTAL" (B2B2C):
+        // Si el cargo es de la matriz (UniversalSoft), verifico si compartimos Skins operativas
+        if (role.contractId === 'c-001') {
+          const roleSkins = role.skins || [];
+          const hasSharedSkin = roleSkins.some(skin => combinedAllowedSkins.includes(skin));
+          if (!hasSharedSkin) return false;
+        } else {
+          // Si el cargo es de otro inquilino (Ej. Casino VIP), Muro Absoluto.
+          return false; 
+        }
       }
     }
     if (role.origin === 'Predefinido') return true;
@@ -349,7 +366,7 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                 (c) => c.id === roleContractId
               );
 
-              // 👇 LA LEY SUPREMA: PODER ABSOLUTO EXTERNO, JERARQUÍA ESTRICTA INTERNA
+              // REGLAS ABSOLUTAS DE VISIBILIDAD
               const isPredefined = role.id === '00001';
               const isMyRole = role.id === currentUser.roleId; 
               
@@ -359,10 +376,15 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
 
               const hasLineageAccess = 
                 isRootGod || 
-                (isMatrixStaff && isExternalTarget) || 
+                (isMatrixStaff && isExternalTarget) || // REGLA APROBADA: Omnipotencia B2B mantenida
                 isDescendantCreator(role.createdBy);
 
+              // isReadOnly Oculta Editar y Skins
               const isReadOnly = (isExternalTarget && !isMatrixStaff) || isPredefined || isMyRole || !hasLineageAccess;
+
+              // REGLA APROBADA: Clonar disponible para auto-cargo o inferiores. Bloqueado totalmente para clientes viendo a UniversalSoft.
+              const clientViewingMatrix = isExternalTarget && !isMatrixStaff;
+              const isCloneable = canClone && !clientViewingMatrix && (isMyRole || hasLineageAccess);
 
               let displaySkins = [];
               let allowedSkinsForStack = combinedAllowedSkins;
@@ -423,89 +445,95 @@ export const RoleListView = ({ onNavigate, currentSkin }) => {
                     {empCount}
                   </td>
                   <td className="p-4 text-center whitespace-nowrap">
-                    {isReadOnly ? (
-                      <div className="flex justify-center">
+                    <div className="flex items-center justify-center gap-2">
+                      {isReadOnly ? (
                         <span 
                           className="text-[10px] text-slate-400 italic bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700 cursor-help flex items-center gap-1.5"
                           title={
-                            isExternalTarget && !isMatrixStaff ? "Aislamiento B2B: Cargo pertenece a otra empresa." :
+                            clientViewingMatrix ? "Aislamiento B2B: Plantilla externa." :
                             isPredefined ? "Inmunidad: Plantilla Global del Sistema." :
-                            isMyRole ? "Inmutabilidad de Sesión: No puedes auto-editar tu cargo." :
-                            "Jerarquía de Linaje: Este cargo fue creado por un superior o fuera de tu descendencia."
+                            isMyRole ? "Tu propio cargo. (Usa el botón clonar)" :
+                            "Jerarquía: Cargo creado por un superior."
                           }
                         >
                           <Shield size={10} className="text-slate-500" /> Solo Lectura
                         </span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center gap-2">
-                        {canEdit ? (
-                          <button
-                            onClick={() =>
-                              onNavigate(
-                                `role_edit_${role.id}`,
-                                `Editar: ${role.name}`,
-                                Edit3,
-                                role
-                              )
-                            }
-                            className="p-2 text-slate-400 hover:text-[#D10057] hover:bg-[#D10057]/10 rounded-lg transition-colors"
-                          >
-                            <Edit3 size={16} />
-                          </button>
-                        ) : (
-                          <div
-                            className="p-2 text-slate-700 opacity-50"
-                            title="Sin Permiso de Edición"
-                          >
-                            <Edit3 size={16} />
-                          </div>
-                        )}
-                        {canManageSkins ? (
-                          <button
-                            onClick={() =>
-                              onNavigate(
-                                `role_manage_skins_${role.id}`,
-                                `Gestionar Skins: ${role.name}`,
-                                Globe,
-                                role
-                              )
-                            }
-                            className="p-2 text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
-                          >
-                            <Globe size={16} />
-                          </button>
-                        ) : (
-                          <div
-                            className="p-2 text-slate-700 opacity-50"
-                            title="Sin Permiso de Skins"
-                          >
-                            <Globe size={16} />
-                          </div>
-                        )}
-                        {canClone ? (
-                          <button
-                            onClick={() => {
-                              if (!hasGlobalPermission('rol_clone_act'))
-                                return alert(
-                                  'Acceso Denegado: No tienes permiso de ACCIÓN para clonar cargos.'
-                                );
-                              cloneRole(role.id);
-                            }}
-                            className="p-2 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
-                          >
-                            <Copy size={16} />
-                          </button>
-                        ) : (
+                      ) : (
+                        <>
+                          {canEdit ? (
+                            <button
+                              onClick={() =>
+                                onNavigate(
+                                  `role_edit_${role.id}`,
+                                  `Editar: ${role.name}`,
+                                  Edit3,
+                                  role
+                                )
+                              }
+                              className="p-2 text-slate-400 hover:text-[#D10057] hover:bg-[#D10057]/10 rounded-lg transition-colors"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                          ) : (
+                            <div
+                              className="p-2 text-slate-700 opacity-50"
+                              title="Sin Permiso de Edición"
+                            >
+                              <Edit3 size={16} />
+                            </div>
+                          )}
+                          {canManageSkins ? (
+                            <button
+                              onClick={() =>
+                                onNavigate(
+                                  `role_manage_skins_${role.id}`,
+                                  `Gestionar Skins: ${role.name}`,
+                                  Globe,
+                                  role
+                                )
+                              }
+                              className="p-2 text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
+                            >
+                              <Globe size={16} />
+                            </button>
+                          ) : (
+                            <div
+                              className="p-2 text-slate-700 opacity-50"
+                              title="Sin Permiso de Skins"
+                            >
+                              <Globe size={16} />
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* BOTÓN CLONAR INDEPENDIENTE */}
+                      {isCloneable ? (
+                        <button
+                          onClick={() => {
+                            if (!hasGlobalPermission('rol_clone_act'))
+                              return alert(
+                                'Acceso Denegado: No tienes permiso de ACCIÓN para clonar cargos.'
+                              );
+                            cloneRole(role.id);
+                          }}
+                          className="p-2 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
+                          title="Clonar Cargo"
+                        >
+                          <Copy size={16} />
+                        </button>
+                      ) : (
+                        /* Si no es de solo lectura, mostramos el icono apagado de clonar */
+                        !isReadOnly && (
                           <div
                             className="p-2 text-slate-700 opacity-50"
                             title="Sin Permiso de Clonación"
                           >
                             <Copy size={16} />
                           </div>
-                        )}
-                      </div>
-                    )}
+                        )
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
